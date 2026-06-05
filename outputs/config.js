@@ -17,5 +17,5 @@ window.AICO_CONFIG = {
   provider: "gemini",
   proxyUrl: "https://aicocoach-proxy.vercel.app/api/coach",  // sicherer Server-Proxy (Key liegt serverseitig)
   apiKey: "",                 // optionaler Direkt-Default-Key (Fallback) – beim Deploy injizierbar
-  model: "gemini-2.0-flash"
+  model: "gemini-2.5-flash"
 };
