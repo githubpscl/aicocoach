@@ -226,7 +226,10 @@ function trainingForm(t){
    SPIELE / LEISTUNGSDATEN
    ============================================================ */
 function vMatches(){
-  view.appendChild(h(`<div><h2 class="section">Spiele</h2><div id="mlist"></div><h2 class="section">Top-Torschützen</h2><div class="card" id="scorers"></div></div>`));
+  view.appendChild(h(`<div>
+    <div class="row" style="align-items:center"><h2 class="section" style="margin-bottom:0">Spiele</h2><div class="spacer"></div><button class="btn gho sm" id="impMatches">⚽ Echte importieren</button></div>
+    <div id="mlist"></div><h2 class="section">Top-Torschützen</h2><div class="card" id="scorers"></div></div>`));
+  $('#impMatches').onclick=()=>importFootballModal();
   const list=$('#mlist');
   const ms=[...S.matches].sort((a,b)=>b.date.localeCompare(a.date));
   if(!ms.length) list.appendChild(h(`<div class="empty"><span class="em">⚽</span>Noch keine Spiele erfasst.</div>`));
@@ -436,6 +439,12 @@ function vSettings(){
       </div>
     </div>
 
+    <h2 class="section">Echte Liga-Daten</h2>
+    <div class="card">
+      <div class="muted small" style="margin-bottom:8px">Importiere echte Teams, Ergebnisse & Tabellenstand aus <strong>OpenLigaDB</strong> – wähle Liga, Saison und dein Team.</div>
+      <button class="btn sec sm" id="impFootball">⚽ Liga-Daten importieren</button>
+    </div>
+
     <h2 class="section">Demo</h2>
     <div class="card">
       <div class="muted small" style="margin-bottom:8px">Beispiel-Datensatz: <strong>FC Stern München II</strong> – realer Verein, Heimspielstätte BSA Feldbergstraße & echte Gegnervereine aus dem Kreis München; Spieler fiktiv (Datenschutz).</div>
@@ -462,6 +471,7 @@ function vSettings(){
   };
   $('#pull').onclick=async()=>{ readSettingsInputs(); try{ await pullCloud(); render(); toast('Cloud-Daten geladen'); }catch(e){ toast('Fehler: '+e.message); } };
   $('#push').onclick=async()=>{ readSettingsInputs(); try{ await pushCloud(); toast('In Cloud gespeichert'); }catch(e){ toast('Fehler: '+e.message); } };
+  $('#impFootball').onclick=()=>importFootballModal();
   $('#seed').onclick=()=>loadSeed(false);
   $('#export').onclick=()=>{ const blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='aicocoach-backup.json'; a.click(); };
   $('#reset').onclick=()=>{ if(confirm('Wirklich ALLE lokalen Daten löschen?')){ localStorage.removeItem(KEY); S=defaultState(); render(); toast('Zurückgesetzt'); } };
@@ -512,6 +522,106 @@ function loadSeed(overwrite){
   S.matches=JSON.parse(JSON.stringify(d.matches));
   S.aiHistory=[];
   save(); render(); toast('Demo-Daten geladen: '+d.team.name);
+}
+
+/* ============================================================
+   ECHTE FUSSBALLDATEN – OpenLigaDB (kostenlos, ohne Key, CORS-offen)
+   Quelle: https://api.openligadb.de  (DFB-/Liga-Daten, community-gepflegt)
+   ============================================================ */
+const OLB_BASE = 'https://api.openligadb.de';
+const OLB_LEAGUES = [
+  { sc:'bl1', name:'Bundesliga' },
+  { sc:'bl2', name:'2. Bundesliga' },
+  { sc:'bl3', name:'3. Liga' },
+  { sc:'rl-bayern', name:'Regionalliga Bayern' },
+  { sc:'bay', name:'Bayernliga' }
+];
+const olbCurrentSeason = () => { const d=new Date(); return String(d.getMonth()>=6 ? d.getFullYear() : d.getFullYear()-1); };
+
+async function olbGet(path){
+  const r = await fetch(OLB_BASE+path, { headers:{ 'Accept':'application/json' } });
+  if(!r.ok) throw new Error('OpenLigaDB '+r.status);
+  return r.json();
+}
+function olbFinalResult(m){
+  const rs = m.matchResults||[];
+  return rs.find(r=>r.resultTypeID===2) || rs.find(r=>/end/i.test(r.resultName||'')) || rs[rs.length-1] || null;
+}
+function olbMapMatch(m, teamId){
+  const fin = olbFinalResult(m);
+  if(!m.matchIsFinished || !fin) return null;
+  const home = m.team1?.teamId===teamId;
+  const opp = home ? m.team2?.teamName : m.team1?.teamName;
+  const gf = home ? fin.pointsTeam1 : fin.pointsTeam2;
+  const ga = home ? fin.pointsTeam2 : fin.pointsTeam1;
+  return { id:'olb'+m.matchID, date:(m.matchDateTime||'').slice(0,10), opponent:opp||'Gegner',
+           home:!!home, gf:gf||0, ga:ga||0, stats:{}, notes:'Importiert via OpenLigaDB' };
+}
+
+function importFootballModal(){
+  const m = modal(h(`<div>
+    <div class="modal-head"><h3>⚽ Echte Liga-Daten importieren</h3><button class="btn gho sm" id="x">✕</button></div>
+    <div class="muted small" style="margin-bottom:10px">Lädt echte Teams, Ergebnisse & Tabellenstand aus <strong>OpenLigaDB</strong>. Profiligen sind top-aktuell; Amateurligen (Kreisliga etc.) sind dort meist nicht erfasst.</div>
+    <div class="grid2">
+      <div><label>Liga</label><select id="o_lg">${OLB_LEAGUES.map(l=>`<option value="${l.sc}">${l.name}</option>`).join('')}<option value="__custom">Andere (Kürzel)…</option></select></div>
+      <div><label>Saison (Startjahr)</label><input id="o_se" value="${olbCurrentSeason()}" placeholder="z.B. ${olbCurrentSeason()}"/></div>
+    </div>
+    <div id="o_customwrap" style="display:none"><label>Liga-Kürzel</label><input id="o_custom" placeholder="z.B. rl-bayern"/></div>
+    <button class="btn sec" id="o_load" style="margin-top:10px">Teams laden</button>
+    <div id="o_teamwrap" style="display:none;margin-top:12px">
+      <label>Dein Team</label><select id="o_team"></select>
+      <div id="o_info" class="muted small" style="margin-top:8px"></div>
+      <label style="margin-top:10px"><input type="checkbox" id="o_setname" checked style="width:auto;margin-right:6px"/>Teamname übernehmen</label>
+      <div class="divider"></div>
+      <button class="btn" id="o_import">Echte Spiele importieren</button>
+      <div class="muted tiny" style="margin-top:8px">Importiert alle beendeten Spiele dieser Saison als Ergebnisse (überschreibt vorhandene Spiele). Spielerstatistiken/Kader sind in dieser freien Quelle nicht enthalten – Kader bitte manuell pflegen.</div>
+    </div>
+    <div id="o_msg" class="muted small" style="margin-top:10px"></div>
+  </div>`));
+  m.querySelector('#x').onclick=closeModal;
+  const lg=m.querySelector('#o_lg'), cw=m.querySelector('#o_customwrap');
+  lg.onchange=()=>{ cw.style.display = lg.value==='__custom' ? 'block':'none'; };
+  const shortcut=()=> lg.value==='__custom' ? (m.querySelector('#o_custom').value.trim()) : lg.value;
+  const msg=t=>{ m.querySelector('#o_msg').textContent=t; };
+
+  let teams=[];
+  m.querySelector('#o_load').onclick=async()=>{
+    const sc=shortcut(), se=m.querySelector('#o_se').value.trim();
+    if(!sc) return msg('Bitte Liga-Kürzel angeben.');
+    msg('Lade Teams…');
+    try{
+      teams=await olbGet(`/getavailableteams/${encodeURIComponent(sc)}/${encodeURIComponent(se)}`);
+      if(!teams.length){ msg('Keine Teams gefunden – Liga-Kürzel/Saison prüfen.'); return; }
+      teams.sort((a,b)=>(a.teamName||'').localeCompare(b.teamName||''));
+      const sel=m.querySelector('#o_team');
+      sel.innerHTML=teams.map(t=>`<option value="${t.teamId}">${esc(t.teamName)}</option>`).join('');
+      m.querySelector('#o_teamwrap').style.display='block';
+      msg(`${teams.length} Teams geladen.`);
+    }catch(e){ msg('Fehler: '+e.message); }
+  };
+
+  m.querySelector('#o_import').onclick=async()=>{
+    const sc=shortcut(), se=m.querySelector('#o_se').value.trim();
+    const teamId=+m.querySelector('#o_team').value;
+    const team=teams.find(t=>t.teamId===teamId);
+    msg('Lade Spiele…');
+    try{
+      const all=await olbGet(`/getmatchdata/${encodeURIComponent(sc)}/${encodeURIComponent(se)}`);
+      const mine=all.filter(x=>x.team1?.teamId===teamId||x.team2?.teamId===teamId);
+      const mapped=mine.map(x=>olbMapMatch(x,teamId)).filter(Boolean);
+      if(!mapped.length){ msg('Keine beendeten Spiele für dieses Team gefunden.'); return; }
+      if(m.querySelector('#o_setname').checked && team) S.team.name=team.teamName;
+      S.matches=mapped;
+      // Tabellenstand als Info anzeigen (optional)
+      try{
+        const table=await olbGet(`/getbltable/${encodeURIComponent(sc)}/${encodeURIComponent(se)}`);
+        const pos=table.findIndex(t=>t.teamInfoId===teamId||t.teamName===team?.teamName);
+        if(pos>=0){ const row=table[pos]; S._lastImportInfo=`Tabellenplatz ${pos+1} · ${row.points} Pkt · ${row.won}-${row.draw}-${row.lost}`; }
+      }catch(e){}
+      save(); closeModal(); tab='matches'; render();
+      toast(`${mapped.length} echte Spiele importiert${S._lastImportInfo?' · '+S._lastImportInfo:''}`);
+    }catch(e){ msg('Fehler: '+e.message); }
+  };
 }
 
 /* ---------- Init ---------- */

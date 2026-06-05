@@ -8,6 +8,7 @@ Eine installierbare Web-App (PWA), die als datenbasierter Co-Trainer dient: Kade
 - **Trainings-Tracking** – Einheiten mit Schwerpunkten, Anwesenheit und Belastung (1–5) pro Spieler
 - **Spiel- & Leistungsdaten** – Ergebnisse, Tore, Einsatzminuten, Vorlagen, Torschützenliste
 - **KI-Coach** – erstellt aus allen Daten einen Vorschlag für die nächste Einheit oder beantwortet eigene Fragen
+- **Echte Liga-Daten** – echte Teams, Ergebnisse & Tabellenstand aus [OpenLigaDB](https://www.openligadb.de/) importieren (Setup → Echte Liga-Daten, oder Spiele → „Echte importieren"). Profiligen top-aktuell; Amateurligen dort meist nicht erfasst.
 - **Offline-fähig** und **geräteübergreifend** per optionaler Cloud-Sync
 
 ---
