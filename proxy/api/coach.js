@@ -53,20 +53,31 @@ async function callGroq(key, { system, user, model }) {
   return text;
 }
 
+// Free-Modelle bei OpenRouter sind oft kurzfristig überlastet -> mehrere durchprobieren.
+const OPENROUTER_MODELS = [
+  "openai/gpt-oss-120b:free",
+  "z-ai/glm-4.5-air:free",
+  "openai/gpt-oss-20b:free",
+  "meta-llama/llama-3.3-70b-instruct:free"
+];
 async function callOpenRouter(key, { system, user, model }) {
-  const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
-    body: JSON.stringify({
-      model: model || "meta-llama/llama-3.3-70b-instruct:free",
-      messages: [{ role: "system", content: system || "" }, { role: "user", content: user }]
-    })
-  });
-  const j = await r.json();
-  if (!r.ok) throw new Error("OpenRouter " + r.status + ": " + (j?.error?.message || r.status));
-  const text = j?.choices?.[0]?.message?.content?.trim();
-  if (!text) throw new Error("OpenRouter: leere Antwort");
-  return text;
+  const models = model ? [model, ...OPENROUTER_MODELS] : OPENROUTER_MODELS;
+  let lastErr = "";
+  for (const m of models) {
+    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+      body: JSON.stringify({
+        model: m,
+        messages: [{ role: "system", content: system || "" }, { role: "user", content: user }]
+      })
+    });
+    const j = await r.json().catch(() => ({}));
+    const text = j?.choices?.[0]?.message?.content?.trim();
+    if (r.ok && text) return text;
+    lastErr = m + " -> " + (j?.error?.message || ("HTTP " + r.status));
+  }
+  throw new Error("OpenRouter: " + lastErr);
 }
 
 const PROVIDERS = [
@@ -88,9 +99,12 @@ export default async function handler(req, res) {
   const { system, user, model, provider } = req.body || {};
   if (!user) return res.status(400).json({ error: "Feld 'user' fehlt" });
 
-  // Reihenfolge bestimmen: gewünschter Anbieter zuerst, dann Rest.
+  // Reihenfolge bestimmen: gewünschter Anbieter zuerst, dann Rest als Fallback.
   let order = PROVIDERS.slice();
-  if (provider) order.sort((a, b) => (a.name === provider ? -1 : b.name === provider ? 1 : 0));
+  if (provider) {
+    const idx = order.findIndex(p => p.name === provider);
+    if (idx > 0) order = [order[idx], ...order.slice(0, idx), ...order.slice(idx + 1)];
+  }
 
   // Nur Anbieter mit gesetztem Key versuchen.
   const available = order.filter(p => process.env[p.env]);
