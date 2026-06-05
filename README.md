@@ -20,28 +20,32 @@ Befüllt mit echten Beispieldaten für **FC Stern München II** (realer Verein,
 echte Heimspielstätte & Gegner aus dem Kreis München; Spieler bewusst fiktiv
 zum Schutz realer Amateure).
 
-## Default-KI-Key (ohne Klartext im Repo)
+## KI ohne eigenen Key – sicher per Server-Proxy
 
-Damit die KI-Funktion sofort ohne eigene Anmeldung funktioniert, kann ein
-Default-API-Key hinterlegt werden – **ohne dass er im Repository sichtbar ist**:
+Damit die KI sofort funktioniert, **ohne dass ein Nutzer einen Key einträgt**,
+und ohne dass der Key irgendwo sichtbar wird, läuft die KI über einen kleinen
+**Serverless-Proxy** (Ordner [`proxy/`](proxy/), deployt auf Vercel):
 
-1. Key als verschlüsseltes GitHub-Secret ablegen:
-   ```bash
-   gh secret set AICO_GEMINI_KEY
-   ```
-   (Key holen: <https://aistudio.google.com/app/apikey>)
-2. Der Deploy-Workflow (`.github/workflows/deploy.yml`) injiziert diesen Key
-   beim Build in `outputs/config.js`. Im committeten Code bleibt das Feld leer.
+- Frontend (GitHub Pages) → POST an `https://aicocoach-proxy.vercel.app/api/coach`
+- Der Gemini-Key liegt **ausschließlich serverseitig** als Vercel-Env-Variable
+  `GEMINI_API_KEY` – nicht im Repo, nicht im ausgelieferten Browser-Code.
+- CORS lässt nur die Domain `githubpscl.github.io` zu.
 
-Trägt ein Nutzer in der App unter **Setup → KI** einen eigenen Key ein, hat
-dieser immer Vorrang vor dem Default-Key.
+Key einmalig serverseitig setzen (Key holen: <https://aistudio.google.com/app/apikey>):
 
-> **Hinweis zur Sicherheit:** Ein in eine rein statische Seite ausgelieferter
-> Default-Key ist im Browser des Nutzers technisch auslesbar (wie z. B. ein
-> Google-Maps-Key). Deshalb den Gemini-Key in der Google Cloud Console mit
-> einer **HTTP-Referrer-Beschränkung** auf `githubpscl.github.io/*` versehen –
-> dann ist er nur von dieser Domain aus nutzbar. Für volle Geheimhaltung
-> bräuchte es einen kleinen Serverless-Proxy (separat).
+```bash
+cd proxy
+vercel env add GEMINI_API_KEY production   # Key einfügen, wenn gefragt
+vercel deploy --prod --yes                 # neu deployen, damit der Key greift
+```
+
+Trägt ein Nutzer in der App unter **Setup → KI** trotzdem einen eigenen Key
+ein, hat dieser Vorrang (Direktaufruf, ohne Proxy).
+
+> Optionaler unsicherer Fallback: Per GitHub-Secret `AICO_GEMINI_KEY` kann der
+> Deploy-Workflow stattdessen einen Key direkt in `outputs/config.js` injizieren.
+> Davon ist abzuraten – ein in eine statische Seite ausgelieferter Key ist im
+> Browser auslesbar. Der Proxy oben ist der sichere Weg.
 
 ## Lokal testen
 

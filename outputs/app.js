@@ -29,16 +29,11 @@ function save(sync=true){
 }
 const uid = () => Math.random().toString(36).slice(2,10);
 
-/* Effektive KI-Einstellungen: eigener Key des Nutzers hat Vorrang,
-   sonst greift der (beim Deploy injizierte) Default-Key aus config.js. */
-function effSettings(){
-  const cfg = (typeof window!=='undefined' && window.AICO_CONFIG) || {};
-  if(S.settings.apiKey) return S.settings;            // Nutzer hat eigenen Key
-  if(cfg.apiKey) return { ...S.settings, provider: cfg.provider||S.settings.provider, apiKey: cfg.apiKey, model: cfg.model||S.settings.model };
-  return S.settings;                                   // gar kein Key vorhanden
-}
-function hasAnyKey(){ return !!effSettings().apiKey; }
-function usingDefaultKey(){ return !S.settings.apiKey && !!(window.AICO_CONFIG && window.AICO_CONFIG.apiKey); }
+/* KI-Verfügbarkeit: entweder eigener Key des Nutzers, oder ein
+   konfigurierter Default (sicherer Server-Proxy bzw. Direkt-Default-Key). */
+function aiCfg(){ return (typeof window!=='undefined' && window.AICO_CONFIG) || {}; }
+function hasAnyKey(){ const c=aiCfg(); return !!(S.settings.apiKey || c.proxyUrl || c.apiKey); }
+function usingDefaultKey(){ const c=aiCfg(); return !S.settings.apiKey && !!(c.proxyUrl || c.apiKey); }
 
 /* ---------- DOM helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -355,9 +350,31 @@ async function runCoach(kind, question){
 }
 function showAI(text){ modal(h(`<div><div class="modal-head"><h3>Empfehlung</h3><button class="btn gho sm" onclick="this.closest('.modal-bg').remove()">✕</button></div><div class="ai-box">${esc(text)}</div></div>`)); }
 
-/* ---------- LLM Anbindung (kostenlose APIs) ---------- */
+/* ---------- LLM Anbindung ----------
+   Reihenfolge: 1) eigener Key des Nutzers (Direktaufruf),
+   2) sicherer Server-Proxy (Key serverseitig), 3) Direkt-Default-Key (Fallback). */
 async function callLLM(system, user){
-  const {provider, apiKey, model}=effSettings();
+  const c = aiCfg();
+  // 1) Nutzer hat eigenen Key -> direkt beim gewählten Anbieter
+  if(S.settings.apiKey){
+    return callProviderDirect(S.settings.provider, S.settings.apiKey, S.settings.model, system, user);
+  }
+  // 2) Sicherer Standard: Server-Proxy hält den Key
+  if(c.proxyUrl){
+    const r=await fetch(c.proxyUrl,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({system, user, model:c.model||''})});
+    let j={}; try{ j=await r.json(); }catch(e){}
+    if(!r.ok) throw new Error(j.error||('Proxy: '+r.status));
+    return (j.text||'').trim();
+  }
+  // 3) Fallback: Direkt-Default-Key im Client (nur falls konfiguriert)
+  if(c.apiKey){
+    return callProviderDirect(c.provider||'gemini', c.apiKey, c.model, system, user);
+  }
+  throw new Error('Kein API-Key oder Proxy konfiguriert');
+}
+
+async function callProviderDirect(provider, apiKey, model, system, user){
   if(provider==='groq'){
     const r=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
