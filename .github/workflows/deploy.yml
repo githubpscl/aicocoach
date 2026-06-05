@@ -1,0 +1,45 @@
+name: Deploy AICOCoach to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Immer nur ein Deploy gleichzeitig
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Default-API-Key injizieren (aus verschlüsseltem Secret)
+        env:
+          AICO_GEMINI_KEY: ${{ secrets.AICO_GEMINI_KEY }}
+        run: |
+          node -e "const fs=require('fs');const p='outputs/config.js';let s=fs.readFileSync(p,'utf8');s=s.replace('apiKey: \"\"','apiKey: '+JSON.stringify(process.env.AICO_GEMINI_KEY||''));fs.writeFileSync(p,s);console.log('Default-Key injiziert:', (process.env.AICO_GEMINI_KEY||'').length>0 ? 'ja' : 'nein (Secret nicht gesetzt)');"
+
+      - name: Upload Pages-Artefakt (nur Web-Verzeichnis)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: outputs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Auf GitHub Pages veröffentlichen
+        id: deployment
+        uses: actions/deploy-pages@v4

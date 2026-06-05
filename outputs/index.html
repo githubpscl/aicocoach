@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b6e4f" />
+  <title>AICOCoach – Dein KI Co-Trainer</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <img src="icon.svg" alt="" class="brand-logo" />
+      <div>
+        <h1 id="teamName">AICOCoach</h1>
+        <span class="brand-sub" id="syncStatus">Lokal</span>
+      </div>
+    </div>
+    <button class="icon-btn" id="syncBtn" title="Synchronisieren">⟳</button>
+  </header>
+
+  <main id="view" class="view"></main>
+
+  <nav class="tabbar">
+    <button data-tab="dashboard" class="tab active">📊<span>Übersicht</span></button>
+    <button data-tab="squad" class="tab">👥<span>Kader</span></button>
+    <button data-tab="training" class="tab">🏃<span>Training</span></button>
+    <button data-tab="matches" class="tab">⚽<span>Spiele</span></button>
+    <button data-tab="coach" class="tab">🤖<span>KI-Coach</span></button>
+    <button data-tab="settings" class="tab">⚙️<span>Setup</span></button>
+  </nav>
+
+  <div id="modalRoot"></div>
+  <div id="toast" class="toast"></div>
+
+  <script src="config.js"></script>
+  <script src="seed.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

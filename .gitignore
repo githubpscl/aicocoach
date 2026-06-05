@@ -1,0 +1,19 @@
+# Abhängigkeiten
+node_modules/
+
+# Capacitor native Projekte (werden lokal generiert)
+android/
+ios/
+
+# Build-/Tooling-Artefakte
+.DS_Store
+*.log
+.vercel/
+
+# Lokale Key-Overrides (NIE committen)
+outputs/config.local.js
+.env
+.env.*
+
+# Claude Code lokale Einstellungen
+.claude/

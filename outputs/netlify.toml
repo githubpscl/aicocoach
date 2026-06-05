@@ -1,0 +1,15 @@
+# Netlify-Konfiguration für AICOCoach (statische PWA, kein Build nötig)
+[build]
+  publish = "."
+  command = ""
+
+# Service Worker & Manifest mit korrektem Verhalten ausliefern
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/manifest.json"
+  [headers.values]
+    Content-Type = "application/manifest+json"

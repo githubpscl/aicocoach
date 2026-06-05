@@ -1,0 +1,22 @@
+{
+  "name": "aicocoach",
+  "version": "1.0.0",
+  "description": "AICOCoach – KI Co-Trainer für den Amateurfußball (PWA, später native App via Capacitor)",
+  "private": true,
+  "scripts": {
+    "serve": "npx serve .",
+    "cap:add:android": "npx cap add android",
+    "cap:add:ios": "npx cap add ios",
+    "cap:sync": "npx cap sync",
+    "cap:open:android": "npx cap open android",
+    "cap:open:ios": "npx cap open ios"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/ios": "^6.1.2"
+  }
+}

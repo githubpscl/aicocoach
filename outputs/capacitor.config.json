@@ -1,0 +1,9 @@
+{
+  "appId": "de.aicocoach.app",
+  "appName": "AICOCoach",
+  "webDir": ".",
+  "server": {
+    "androidScheme": "https"
+  },
+  "backgroundColor": "#0f1216"
+}
