@@ -17,3 +17,6 @@ outputs/config.local.js
 
 # Claude Code lokale Einstellungen
 .claude/
+
+# Forschungs-/Testverzeichnis
+fonttest/

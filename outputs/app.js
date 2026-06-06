@@ -227,9 +227,9 @@ function trainingForm(t){
    ============================================================ */
 function vMatches(){
   view.appendChild(h(`<div>
-    <div class="row" style="align-items:center"><h2 class="section" style="margin-bottom:0">Spiele</h2><div class="spacer"></div><button class="btn gho sm" id="impMatches">⚽ Echte importieren</button></div>
+    <div class="row" style="align-items:center"><h2 class="section" style="margin-bottom:0">Spiele</h2><div class="spacer"></div><button class="btn gho sm" id="impMatches">🔎 fussball.de</button></div>
     <div id="mlist"></div><h2 class="section">Top-Torschützen</h2><div class="card" id="scorers"></div></div>`));
-  $('#impMatches').onclick=()=>importFootballModal();
+  $('#impMatches').onclick=()=>importFussballModal();
   const list=$('#mlist');
   const ms=[...S.matches].sort((a,b)=>b.date.localeCompare(a.date));
   if(!ms.length) list.appendChild(h(`<div class="empty"><span class="em">⚽</span>Noch keine Spiele erfasst.</div>`));
@@ -439,10 +439,12 @@ function vSettings(){
       </div>
     </div>
 
-    <h2 class="section">Echte Liga-Daten</h2>
+    <h2 class="section">Echte Vereinsdaten</h2>
     <div class="card">
-      <div class="muted small" style="margin-bottom:8px">Importiere echte Teams, Ergebnisse & Tabellenstand aus <strong>OpenLigaDB</strong> – wähle Liga, Saison und dein Team.</div>
-      <button class="btn sec sm" id="impFootball">⚽ Liga-Daten importieren</button>
+      <div class="muted small" style="margin-bottom:8px">Suche deinen echten Verein bei <strong>fussball.de / BFV</strong> und importiere den echten Spielplan inkl. Ergebnissen (auch Amateurligen).</div>
+      <button class="btn sm" id="impFussball">🔎 Verein suchen (fussball.de)</button>
+      <div class="muted tiny" style="margin:10px 0 6px">Alternativ – Profiligen (stabile Quelle OpenLigaDB):</div>
+      <button class="btn sec sm" id="impFootball">⚽ Liga-Daten (OpenLigaDB)</button>
     </div>
 
     <h2 class="section">Demo</h2>
@@ -471,6 +473,7 @@ function vSettings(){
   };
   $('#pull').onclick=async()=>{ readSettingsInputs(); try{ await pullCloud(); render(); toast('Cloud-Daten geladen'); }catch(e){ toast('Fehler: '+e.message); } };
   $('#push').onclick=async()=>{ readSettingsInputs(); try{ await pushCloud(); toast('In Cloud gespeichert'); }catch(e){ toast('Fehler: '+e.message); } };
+  $('#impFussball').onclick=()=>importFussballModal();
   $('#impFootball').onclick=()=>importFootballModal();
   $('#seed').onclick=()=>loadSeed(false);
   $('#export').onclick=()=>{ const blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='aicocoach-backup.json'; a.click(); };
@@ -620,6 +623,74 @@ function importFootballModal(){
       }catch(e){}
       save(); closeModal(); tab='matches'; render();
       toast(`${mapped.length} echte Spiele importiert${S._lastImportInfo?' · '+S._lastImportInfo:''}`);
+    }catch(e){ msg('Fehler: '+e.message); }
+  };
+}
+
+/* ============================================================
+   ECHTE VEREINSDATEN – fussball.de / BFV (über sicheren Proxy)
+   Sucht echte Vereine, listet Mannschaften und importiert den
+   echten Spielplan inkl. dekodierter Ergebnisse.
+   ============================================================ */
+function fbBase(){ const p=(window.AICO_CONFIG&&window.AICO_CONFIG.proxyUrl)||''; return p.replace(/\/api\/coach$/,'')||'https://aicocoach-proxy.vercel.app'; }
+async function fbApi(params){ const r=await fetch(fbBase()+'/api/fussball?'+new URLSearchParams(params)); const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error||('Fehler '+r.status)); return j; }
+
+function importFussballModal(){
+  const m=modal(h(`<div>
+    <div class="modal-head"><h3>🔎 Verein suchen (fussball.de)</h3><button class="btn gho sm" id="x">✕</button></div>
+    <div class="muted small" style="margin-bottom:10px">Echte Daten von <strong>fussball.de / BFV</strong>: Verein suchen → Mannschaft wählen → echten Spielplan inkl. Ergebnissen importieren.</div>
+    <label>Vereinsname</label>
+    <div class="row" style="gap:6px"><input id="fb_q" placeholder="z.B. FC Stern München" style="flex:1"/><button class="btn sec sm" id="fb_search" style="width:auto">Suchen</button></div>
+    <div id="fb_clubs" style="margin-top:10px"></div>
+    <div id="fb_teamwrap" style="display:none;margin-top:12px">
+      <label>Mannschaft</label><select id="fb_team"></select>
+      <label style="margin-top:10px"><input type="checkbox" id="fb_setname" checked style="width:auto;margin-right:6px"/>Mannschaftsname als Teamname übernehmen</label>
+      <div class="divider"></div>
+      <button class="btn" id="fb_import">Echten Spielplan importieren</button>
+      <div class="muted tiny" style="margin-top:8px">Importiert die verfügbaren Spiele (jüngste Ergebnisse + kommende). Kader/Spielernamen sind auf fussball.de meist nicht öffentlich (Datenschutz) – bitte manuell pflegen.</div>
+    </div>
+    <div id="fb_msg" class="muted small" style="margin-top:10px"></div>
+  </div>`));
+  m.querySelector('#x').onclick=closeModal;
+  const msg=t=>{ m.querySelector('#fb_msg').textContent=t||''; };
+  let clubId=null;
+
+  async function loadTeams(id){
+    clubId=id; msg('Lade Mannschaften…');
+    try{
+      const j=await fbApi({action:'teams', clubId:id});
+      if(!j.teams||!j.teams.length){ msg('Keine Mannschaften gefunden.'); return; }
+      m.querySelector('#fb_team').innerHTML=j.teams.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
+      m.querySelector('#fb_teamwrap').style.display='block'; msg(`${j.teams.length} Mannschaften geladen.`);
+    }catch(e){ msg('Fehler: '+e.message); }
+  }
+
+  m.querySelector('#fb_search').onclick=async()=>{
+    const q=m.querySelector('#fb_q').value.trim(); if(!q) return msg('Bitte Vereinsname eingeben.');
+    msg('Suche…'); m.querySelector('#fb_clubs').innerHTML=''; m.querySelector('#fb_teamwrap').style.display='none';
+    try{
+      const j=await fbApi({action:'search', q});
+      if(!j.clubs||!j.clubs.length){ msg('Kein Verein gefunden.'); return; }
+      msg('');
+      const wrap=m.querySelector('#fb_clubs');
+      j.clubs.forEach(c=>{ const b=h(`<button class="btn gho sm" style="display:block;width:100%;text-align:left;margin-bottom:6px">⚽ ${esc(c.name)}</button>`); b.onclick=()=>{ wrap.querySelectorAll('button').forEach(x=>x.classList.remove('sec')); b.classList.add('sec'); loadTeams(c.id); }; wrap.appendChild(b); });
+      if(j.clubs.length===1) loadTeams(j.clubs[0].id);
+    }catch(e){ msg('Fehler: '+e.message); }
+  };
+  m.querySelector('#fb_q').addEventListener('keydown',e=>{ if(e.key==='Enter') m.querySelector('#fb_search').click(); });
+
+  m.querySelector('#fb_import').onclick=async()=>{
+    const team=m.querySelector('#fb_team').value;
+    msg('Lade Spielplan…');
+    try{
+      const j=await fbApi({action:'matches', clubId, team});
+      const imported=(j.matches||[]).map(mt=>({ id:'fb'+(mt.date||'')+mt.opponent.replace(/\W/g,''), date:mt.date||new Date().toISOString().slice(0,10),
+        opponent:mt.opponent, home:!!mt.home, gf: mt.finished?mt.gf:0, ga: mt.finished?mt.ga:0, stats:{}, notes:'Importiert via fussball.de'+(mt.finished?'':' (geplant)') }));
+      if(!imported.length){ msg('Keine Spiele gefunden.'); return; }
+      if(m.querySelector('#fb_setname').checked) S.team.name=team;
+      S.matches=imported; save(); closeModal(); tab='matches'; render();
+      const fin=imported.filter(x=>x.notes&&!/geplant/.test(x.notes)).length;
+      toast(`${imported.length} Spiele von fussball.de importiert (${fin} mit Ergebnis)`);
     }catch(e){ msg('Fehler: '+e.message); }
   };
 }

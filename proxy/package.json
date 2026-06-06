@@ -3,5 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "AICOCoach sicherer KI-Proxy (Gemini-Key serverseitig)"
+  "description": "AICOCoach sicherer KI-Proxy (Gemini-Key serverseitig) + fussball.de-Datenproxy",
+  "dependencies": {
+    "opentype.js": "^1.3.4"
+  }
 }
