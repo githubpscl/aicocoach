@@ -26,6 +26,7 @@ function save(sync=true){
   S.updatedAt = Date.now();
   localStorage.setItem(KEY, JSON.stringify(S));
   if(sync && S.team.code && S.settings.supaUrl) pushCloud().catch(()=>{});
+  if(sync && typeof AUTH!=='undefined' && AUTH.activeTeamId) pushTeamData();
 }
 const uid = () => Math.random().toString(36).slice(2,10);
 
@@ -59,7 +60,8 @@ let tab = 'dashboard';
 const VIEWS = { dashboard:vDashboard, squad:vSquad, training:vTraining, matches:vMatches, coach:vCoach, settings:vSettings };
 function render(){
   $('#teamName').textContent = S.team.name || 'AICOCoach';
-  $('#syncStatus').textContent = S.team.code && S.settings.supaUrl ? 'Cloud · '+S.team.code : 'Lokal';
+  if(typeof AUTH!=='undefined' && AUTH.user){ updateAccountBar(); }
+  else $('#syncStatus').textContent = S.team.code && S.settings.supaUrl ? 'Cloud · '+S.team.code : (authConfigured()?'Nicht angemeldet':'Lokal');
   const oldFab=document.querySelector('.fab'); if(oldFab) oldFab.remove();
   view.innerHTML=''; VIEWS[tab]();
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
@@ -408,6 +410,7 @@ async function callProviderDirect(provider, apiKey, model, system, user){
 function vSettings(){
   const st=S.settings;
   view.appendChild(h(`<div>
+    <div id="accountSection"></div>
     <h2 class="section">Team</h2>
     <div class="card">
       <label>Teamname</label><input id="s_team" value="${esc(S.team.name)}"/>
@@ -473,6 +476,7 @@ function vSettings(){
   };
   $('#pull').onclick=async()=>{ readSettingsInputs(); try{ await pullCloud(); render(); toast('Cloud-Daten geladen'); }catch(e){ toast('Fehler: '+e.message); } };
   $('#push').onclick=async()=>{ readSettingsInputs(); try{ await pushCloud(); toast('In Cloud gespeichert'); }catch(e){ toast('Fehler: '+e.message); } };
+  renderAccountSection();
   $('#impFussball').onclick=()=>importFussballModal();
   $('#impFootball').onclick=()=>importFootballModal();
   $('#seed').onclick=()=>loadSeed(false);
@@ -695,6 +699,216 @@ function importFussballModal(){
   };
 }
 
+/* ============================================================
+   LOGIN & TEAM-ZUORDNUNG – Supabase Auth + team-bezogene Cloud-Daten
+   ============================================================ */
+let SB = null;
+const AUTH = { user:null, teams:[], activeTeamId:null };
+function authConfigured(){ const c=window.AICO_CONFIG&&AICO_CONFIG.supabase; return !!(c && c.url && c.anonKey && window.supabase); }
+function sbClient(){ if(!SB && authConfigured()) SB = window.supabase.createClient(AICO_CONFIG.supabase.url, AICO_CONFIG.supabase.anonKey); return SB; }
+function activeTeam(){ return AUTH.teams.find(t=>t.team_id===AUTH.activeTeamId); }
+
+async function initAuth(){
+  if(!authConfigured()) return;
+  const sb = sbClient();
+  try{
+    const { data:{ session } } = await sb.auth.getSession();
+    AUTH.user = session?.user || null;
+    sb.auth.onAuthStateChange(async (_e, sess)=>{
+      const wasId = AUTH.user?.id; AUTH.user = sess?.user || null;
+      if(AUTH.user && AUTH.user.id!==wasId){ await afterLogin(); }
+      if(!AUTH.user){ AUTH.teams=[]; AUTH.activeTeamId=null; }
+      updateAccountBar();
+    });
+    if(AUTH.user) await afterLogin();
+  }catch(e){ /* offline o.ä. */ }
+  updateAccountBar();
+}
+
+async function afterLogin(){
+  try{
+    await loadMyTeams();
+    const stored = localStorage.getItem('aico_active_team');
+    const pick = AUTH.teams.find(t=>t.team_id===stored) || AUTH.teams[0];
+    if(pick) await setActiveTeam(pick.team_id, false);
+  }catch(e){ toast('Cloud: '+(e.message||e)); }
+  updateAccountBar(); render();
+}
+
+async function loadMyTeams(){
+  const sb=sbClient();
+  const { data, error } = await sb.from('team_members').select('team_id, role, teams(name, fussball_club_id)');
+  if(error) throw error;
+  AUTH.teams = (data||[]).map(r=>({ team_id:r.team_id, role:r.role, name:r.teams?.name||'Team', clubId:r.teams?.fussball_club_id }));
+}
+
+async function setActiveTeam(id, doRender=true){
+  const sb=sbClient();
+  const { data, error } = await sb.from('team_data').select('data').eq('team_id', id).maybeSingle();
+  if(error) throw error;
+  AUTH.activeTeamId=id; localStorage.setItem('aico_active_team', id);
+  const d = (data && data.data) || {};
+  const t = activeTeam();
+  S.team = { name: t?.name || S.team.name, code:'' };
+  S.players = d.players||[]; S.trainings = d.trainings||[]; S.matches = d.matches||[]; S.aiHistory = d.aiHistory||[];
+  localStorage.setItem(KEY, JSON.stringify(S));
+  if(doRender){ updateAccountBar(); render(); }
+}
+
+let _pushT=null;
+function pushTeamData(){
+  const sb=sbClient(); if(!sb || !AUTH.activeTeamId) return;
+  clearTimeout(_pushT);
+  _pushT=setTimeout(async()=>{
+    try{ await sb.from('team_data').update({ data:{ players:S.players, trainings:S.trainings, matches:S.matches, aiHistory:S.aiHistory||[] }, updated_at:new Date().toISOString() }).eq('team_id', AUTH.activeTeamId); }
+    catch(e){}
+  }, 600);
+}
+
+async function createTeam(name, clubId){
+  const sb=sbClient();
+  const { data, error } = await sb.rpc('create_team', { p_name:name, p_club_id:clubId||null });
+  if(error) throw error;
+  await loadMyTeams(); await setActiveTeam(data, true);
+  return data;
+}
+
+/* ---- Auth-UI ---- */
+function showAuthScreen(){
+  if(!authConfigured()){ toast('Login nicht konfiguriert'); return; }
+  let mode='login';
+  const m=modal(h(`<div>
+    <div class="modal-head"><h3 id="a_title">Anmelden</h3><button class="btn gho sm" id="x">✕</button></div>
+    <div class="row" style="gap:6px;margin-bottom:10px">
+      <button class="btn sec sm" id="a_tabLogin" style="flex:1">Anmelden</button>
+      <button class="btn gho sm" id="a_tabReg" style="flex:1">Registrieren</button>
+    </div>
+    <label>E-Mail</label><input id="a_email" type="email" inputmode="email" placeholder="trainer@verein.de"/>
+    <label>Passwort</label><input id="a_pw" type="password" placeholder="mind. 6 Zeichen"/>
+    <button class="btn" id="a_go" style="margin-top:12px">Anmelden</button>
+    <div class="divider"></div>
+    <div class="muted small" style="margin-bottom:8px">Lieber ohne Passwort? Wir schicken dir einen Login-Link per E-Mail.</div>
+    <button class="btn sec" id="a_magic">✉️ Magic-Link senden</button>
+    <div id="a_msg" class="muted small" style="margin-top:10px"></div>
+  </div>`));
+  m.querySelector('#x').onclick=closeModal;
+  const msg=(t,err)=>{ const e=m.querySelector('#a_msg'); e.textContent=t||''; e.style.color=err?'var(--danger)':''; };
+  const setMode=mo=>{ mode=mo;
+    m.querySelector('#a_title').textContent = mo==='login'?'Anmelden':'Registrieren';
+    m.querySelector('#a_go').textContent = mo==='login'?'Anmelden':'Konto erstellen';
+    m.querySelector('#a_tabLogin').className = 'btn sm '+(mo==='login'?'sec':'gho');
+    m.querySelector('#a_tabReg').className = 'btn sm '+(mo==='reg'?'sec':'gho');
+  };
+  m.querySelector('#a_tabLogin').onclick=()=>setMode('login');
+  m.querySelector('#a_tabReg').onclick=()=>setMode('reg');
+  m.querySelector('#a_go').onclick=async()=>{
+    const email=m.querySelector('#a_email').value.trim(), pw=m.querySelector('#a_pw').value;
+    if(!email||!pw) return msg('E-Mail und Passwort eingeben.', true);
+    msg('Bitte warten…');
+    const sb=sbClient();
+    try{
+      if(mode==='login'){ const {error}=await sb.auth.signInWithPassword({email,password:pw}); if(error) throw error; closeModal(); toast('Angemeldet'); }
+      else { const {data,error}=await sb.auth.signUp({email,password:pw}); if(error) throw error;
+        if(data.session){ closeModal(); toast('Konto erstellt'); } else msg('Fast geschafft! Bestätige deine E-Mail über den Link, den wir dir geschickt haben.'); }
+    }catch(e){ msg(e.message||String(e), true); }
+  };
+  m.querySelector('#a_magic').onclick=async()=>{
+    const email=m.querySelector('#a_email').value.trim();
+    if(!email) return msg('Bitte E-Mail eingeben.', true);
+    msg('Sende Link…');
+    try{ const sb=sbClient(); const {error}=await sb.auth.signInWithOtp({ email, options:{ emailRedirectTo: location.href.split('#')[0] } }); if(error) throw error; msg('Login-Link gesendet! Schau in dein E-Mail-Postfach.'); }
+    catch(e){ msg(e.message||String(e), true); }
+  };
+  setMode('login');
+}
+
+function createTeamModal(){
+  if(!AUTH.user){ showAuthScreen(); return; }
+  const m=modal(h(`<div>
+    <div class="modal-head"><h3>Neues Team erstellen</h3><button class="btn gho sm" id="x">✕</button></div>
+    <div class="muted small" style="margin-bottom:10px">Suche deinen echten Verein (fussball.de) oder gib einen Namen frei ein.</div>
+    <label>Verein suchen</label>
+    <div class="row" style="gap:6px"><input id="ct_q" placeholder="z.B. FC Stern München" style="flex:1"/><button class="btn sec sm" id="ct_search" style="width:auto">Suchen</button></div>
+    <div id="ct_clubs" style="margin-top:8px"></div>
+    <div id="ct_teamwrap" style="display:none">
+      <label style="margin-top:8px">Mannschaft</label><select id="ct_team"></select>
+    </div>
+    <div class="divider"></div>
+    <label>Teamname</label><input id="ct_name" placeholder="Name des Teams"/>
+    <button class="btn" id="ct_create" style="margin-top:12px">Team erstellen</button>
+    <label style="margin-top:10px"><input type="checkbox" id="ct_import" checked style="width:auto;margin-right:6px"/>Echten Spielplan direkt importieren</label>
+    <div id="ct_msg" class="muted small" style="margin-top:10px"></div>
+  </div>`));
+  m.querySelector('#x').onclick=closeModal;
+  const msg=t=>{ m.querySelector('#ct_msg').textContent=t||''; };
+  let clubId=null, clubMatches=null;
+  m.querySelector('#ct_search').onclick=async()=>{
+    const q=m.querySelector('#ct_q').value.trim(); if(!q) return msg('Vereinsname eingeben.');
+    msg('Suche…'); m.querySelector('#ct_clubs').innerHTML='';
+    try{ const j=await fbApi({action:'search', q});
+      if(!j.clubs?.length){ msg('Kein Verein gefunden.'); return; } msg('');
+      const wrap=m.querySelector('#ct_clubs');
+      j.clubs.forEach(c=>{ const b=h(`<button class="btn gho sm" style="display:block;width:100%;text-align:left;margin-bottom:6px">⚽ ${esc(c.name)}</button>`);
+        b.onclick=async()=>{ clubId=c.id; msg('Lade Mannschaften…'); try{ const t=await fbApi({action:'teams', clubId:c.id}); const sel=m.querySelector('#ct_team'); sel.innerHTML=(t.teams||[]).map(n=>`<option>${esc(n)}</option>`).join(''); m.querySelector('#ct_teamwrap').style.display='block'; sel.onchange=()=>{ m.querySelector('#ct_name').value=sel.value; }; if(sel.value) m.querySelector('#ct_name').value=sel.value; msg(`${t.teams?.length||0} Mannschaften`);}catch(e){ msg('Fehler: '+e.message);} };
+        wrap.appendChild(b); });
+    }catch(e){ msg('Fehler: '+e.message); }
+  };
+  m.querySelector('#ct_create').onclick=async()=>{
+    const name=m.querySelector('#ct_name').value.trim(); if(!name) return msg('Bitte Teamnamen angeben.');
+    msg('Erstelle Team…');
+    try{
+      await createTeam(name, clubId);
+      if(clubId && m.querySelector('#ct_import').checked){
+        try{ const j=await fbApi({action:'matches', clubId, team:name});
+          S.matches=(j.matches||[]).map(mt=>({ id:'fb'+(mt.date||'')+mt.opponent.replace(/\W/g,''), date:mt.date||new Date().toISOString().slice(0,10), opponent:mt.opponent, home:!!mt.home, gf:mt.finished?mt.gf:0, ga:mt.finished?mt.ga:0, stats:{}, notes:'Importiert via fussball.de'+(mt.finished?'':' (geplant)') }));
+          save();
+        }catch(e){}
+      }
+      closeModal(); tab='dashboard'; render(); toast('Team erstellt: '+name);
+    }catch(e){ msg('Fehler: '+(e.message||e)); }
+  };
+}
+
+/* Konto-Bereich in den Einstellungen */
+function renderAccountSection(){
+  const host=$('#accountSection'); if(!host) return; host.innerHTML='';
+  if(!authConfigured()){
+    host.appendChild(h(`<div><h2 class="section">Konto</h2><div class="card"><div class="muted small">Login ist nicht konfiguriert (kein Supabase in config.js).</div></div></div>`));
+    return;
+  }
+  if(!AUTH.user){
+    const c=h(`<div><h2 class="section">Konto & Team</h2><div class="card">
+      <div class="muted small" style="margin-bottom:10px">Melde dich an, um dein Team in der Cloud zu speichern und mit anderen Trainern zu teilen.</div>
+      <button class="btn" id="ac_login">Anmelden / Registrieren</button>
+    </div></div>`);
+    c.querySelector('#ac_login').onclick=showAuthScreen; host.appendChild(c); return;
+  }
+  const teamsHtml = AUTH.teams.length
+    ? AUTH.teams.map(t=>`<button class="btn ${t.team_id===AUTH.activeTeamId?'':'gho'} sm" data-tid="${t.team_id}" style="display:block;width:100%;text-align:left;margin-bottom:6px">${t.team_id===AUTH.activeTeamId?'✓ ':''}${esc(t.name)} <span class="muted tiny">(${esc(t.role)})</span></button>`).join('')
+    : '<div class="muted small">Noch kein Team – erstelle dein erstes.</div>';
+  const c=h(`<div><h2 class="section">Konto & Team</h2>
+    <div class="card">
+      <div class="row"><div><strong>${esc(AUTH.user.email||'Angemeldet')}</strong><div class="muted tiny">${AUTH.teams.length} Team(s)</div></div><div class="spacer"></div><button class="btn gho sm" id="ac_logout" style="width:auto">Abmelden</button></div>
+    </div>
+    <div class="card">
+      <div class="muted tiny" style="margin-bottom:6px">DEINE TEAMS</div>
+      <div id="ac_teams">${teamsHtml}</div>
+      <div class="divider"></div>
+      <button class="btn sm" id="ac_newteam">+ Neues Team erstellen</button>
+    </div></div>`);
+  c.querySelector('#ac_logout').onclick=async()=>{ await sbClient().auth.signOut(); AUTH.user=null; AUTH.teams=[]; AUTH.activeTeamId=null; localStorage.removeItem('aico_active_team'); render(); toast('Abgemeldet'); };
+  c.querySelector('#ac_newteam').onclick=createTeamModal;
+  c.querySelectorAll('#ac_teams [data-tid]').forEach(b=>b.onclick=async()=>{ try{ await setActiveTeam(b.dataset.tid,true); toast('Team gewechselt'); }catch(e){ toast('Fehler: '+(e.message||e)); } });
+  host.appendChild(c);
+}
+
+/* Konto-Leiste oben (Status) */
+function updateAccountBar(){
+  const el=$('#syncStatus'); if(!el) return;
+  if(AUTH.user){ const t=activeTeam(); el.textContent = (t? t.name : 'Kein Team') + ' · ' + (AUTH.user.email||'angemeldet'); }
+  else if(authConfigured()) el.textContent = 'Nicht angemeldet';
+}
+
 /* ---------- Init ---------- */
 (async function init(){
   const firstRun = !localStorage.getItem(KEY);
@@ -707,4 +921,5 @@ function importFussballModal(){
   }
   render();
   if(supaReady()){ try{ await pullCloud(); render(); }catch(e){} }
+  initAuth();
 })();

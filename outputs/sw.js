@@ -1,5 +1,5 @@
 // AICOCoach Service Worker – offline-fähig (cache-first für App-Shell)
-const CACHE = 'aicocoach-v4';
+const CACHE = 'aicocoach-v5';
 const ASSETS = ['./','./index.html','./styles.css','./app.js','./config.js','./seed.js','./manifest.json','./icon.svg'];
 
 self.addEventListener('install', e => {
